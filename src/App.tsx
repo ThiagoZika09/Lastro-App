@@ -1,19 +1,28 @@
 import { CalendarClock } from 'lucide-react';
 import { AnimatePresence, motion, MotionConfig } from 'motion/react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { DashboardHeader } from './components/DashboardHeader';
 import { DayTransactionsModal } from './components/DayTransactionsModal';
-import { ExpensesByCategoryCard } from './components/ExpensesByCategoryCard';
+import { ExpensesByTagsCard } from './components/ExpensesByTagsCard';
 import { FinancialCalendarCard } from './components/FinancialCalendarCard';
+import { FinancialGoalsSection } from './components/FinancialGoalsSection';
 import { FinancialHistoryCard } from './components/FinancialHistoryCard';
+import { GoalConfigModal } from './components/GoalConfigModal';
 import { ModulePlaceholderView } from './components/ModulePlaceholderView';
 import { PrimaryMetricsRow } from './components/PrimaryMetricsRow';
 import { Rolling30DaysCard } from './components/Rolling30DaysCard';
 import { NAV_ITEMS, Sidebar } from './components/Sidebar';
+import { TopBar } from './components/TopBar';
+import {
+  DEFAULT_CATEGORY_GOALS,
+  DEFAULT_PLANNING_INCOME,
+  EXPENSE_CATEGORY_ORDER,
+} from './data/categories';
 import { buildSeedTransactions } from './data/financeRepository';
 import {
   getCalendarMonthGrid,
-  getExpensesByCategory,
+  getCategoryGoalsProgress,
+  getExpensesByTag,
   getFinancialHistory,
   getMonthlySummary,
   getRolling30DaysSummary,
@@ -22,12 +31,17 @@ import {
 } from './lib/finance';
 import type {
   CalendarDayCell,
+  CategoryGoalConfig,
   DashboardViewMode,
+  ExpenseCategoryId,
   HistoryRangeMonths,
   NavigationSectionId,
 } from './types/finance';
 
 type ThemeMode = 'light' | 'dark';
+
+const GOALS_STORAGE_KEY = 'lastro_category_goals';
+const PLANNING_INCOME_STORAGE_KEY = 'lastro_planning_income';
 
 function readInitialTheme(): ThemeMode {
   try {
@@ -48,6 +62,48 @@ function readInitialSidebarPinned(): boolean {
   }
 }
 
+function readInitialCategoryGoals(): Record<ExpenseCategoryId, CategoryGoalConfig> {
+  try {
+    const raw = localStorage.getItem(GOALS_STORAGE_KEY);
+    if (!raw) return DEFAULT_CATEGORY_GOALS;
+    const parsed = JSON.parse(raw) as Partial<
+      Record<ExpenseCategoryId, CategoryGoalConfig>
+    >;
+    const merged = { ...DEFAULT_CATEGORY_GOALS };
+    for (const catId of EXPENSE_CATEGORY_ORDER) {
+      const candidate = parsed[catId];
+      if (
+        candidate &&
+        (candidate.mode === 'none' ||
+          candidate.mode === 'fixed' ||
+          candidate.mode === 'percentage') &&
+        typeof candidate.value === 'number' &&
+        Number.isFinite(candidate.value)
+      ) {
+        merged[catId] = {
+          categoryId: catId,
+          mode: candidate.mode,
+          value: Math.max(0, candidate.value),
+        };
+      }
+    }
+    return merged;
+  } catch {
+    return DEFAULT_CATEGORY_GOALS;
+  }
+}
+
+function readInitialPlanningIncome(): number {
+  try {
+    const raw = localStorage.getItem(PLANNING_INCOME_STORAGE_KEY);
+    if (!raw) return DEFAULT_PLANNING_INCOME;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_PLANNING_INCOME;
+  } catch {
+    return DEFAULT_PLANNING_INCOME;
+  }
+}
+
 export default function App() {
   const [referenceDate] = useState<Date>(() => new Date());
   const [theme, setTheme] = useState<ThemeMode>(readInitialTheme);
@@ -65,6 +121,19 @@ export default function App() {
   const [periodDirection, setPeriodDirection] = useState(0);
   const [historyRange, setHistoryRange] = useState<HistoryRangeMonths>(6);
   const [selectedDay, setSelectedDay] = useState<CalendarDayCell | null>(null);
+
+  // Independent Category Goals & Planning Income state
+  const [categoryGoals, setCategoryGoals] = useState<
+    Record<ExpenseCategoryId, CategoryGoalConfig>
+  >(readInitialCategoryGoals);
+  const [planningIncome, setPlanningIncome] = useState<number>(
+    readInitialPlanningIncome,
+  );
+  const [goalModalOpen, setGoalModalOpen] = useState(false);
+  const [goalModalFocusCategory, setGoalModalFocusCategory] =
+    useState<ExpenseCategoryId | null>(null);
+  const [goalsSavedNotice, setGoalsSavedNotice] = useState(false);
+  const savedNoticeTimerRef = useRef<number | null>(null);
 
   // Sync theme class on <html> and persist
   useEffect(() => {
@@ -89,6 +158,15 @@ export default function App() {
       // Ignore storage write failure
     }
   }, [isPinned]);
+
+  // Cleanup save notice timer on unmount
+  useEffect(() => {
+    return () => {
+      if (savedNoticeTimerRef.current !== null) {
+        window.clearTimeout(savedNoticeTimerRef.current);
+      }
+    };
+  }, []);
 
   // Centralized financial transactions & derived metrics
   const transactions = useMemo(
@@ -123,9 +201,21 @@ export default function App() {
     [transactions, period.year, period.monthIndex, referenceDate],
   );
 
-  const categoryBreakdown = useMemo(
-    () => getExpensesByCategory(transactions, period.year, period.monthIndex),
+  const tagBreakdown = useMemo(
+    () => getExpensesByTag(transactions, period.year, period.monthIndex),
     [transactions, period.year, period.monthIndex],
+  );
+
+  const categoryGoalsProgress = useMemo(
+    () =>
+      getCategoryGoalsProgress(
+        transactions,
+        period.year,
+        period.monthIndex,
+        categoryGoals,
+        planningIncome,
+      ),
+    [transactions, period.year, period.monthIndex, categoryGoals, planningIncome],
   );
 
   const historyPoints = useMemo(
@@ -165,7 +255,42 @@ export default function App() {
     });
   };
 
+  const handleOpenGoalModal = (focusCategoryId?: ExpenseCategoryId) => {
+    setGoalModalFocusCategory(focusCategoryId ?? null);
+    setGoalModalOpen(true);
+  };
+
+  const handleSaveGoals = (
+    nextGoals: Record<ExpenseCategoryId, CategoryGoalConfig>,
+    nextPlanningIncome: number,
+  ) => {
+    setCategoryGoals(nextGoals);
+    setPlanningIncome(nextPlanningIncome);
+    try {
+      localStorage.setItem(GOALS_STORAGE_KEY, JSON.stringify(nextGoals));
+      localStorage.setItem(
+        PLANNING_INCOME_STORAGE_KEY,
+        String(nextPlanningIncome),
+      );
+    } catch {
+      // Ignore storage write failure
+    }
+    setGoalModalOpen(false);
+    setGoalModalFocusCategory(null);
+    setGoalsSavedNotice(true);
+    if (savedNoticeTimerRef.current !== null) {
+      window.clearTimeout(savedNoticeTimerRef.current);
+    }
+    savedNoticeTimerRef.current = window.setTimeout(() => {
+      setGoalsSavedNotice(false);
+    }, 3500);
+  };
+
   const activeNavMeta = NAV_ITEMS.find((n) => n.id === activeSection);
+  const topBarTitle =
+    activeSection === 'dashboard'
+      ? 'Dashboard'
+      : (activeNavMeta?.label ?? 'Lastro');
 
   return (
     <MotionConfig reducedMotion="user">
@@ -193,116 +318,134 @@ export default function App() {
             onCloseMobile={() => setMobileMenuOpen(false)}
           />
 
-          <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-            <div className="mx-auto w-full max-w-[1320px]">
-              <AnimatePresence mode="wait">
-                {activeSection !== 'dashboard' && activeNavMeta ? (
-                  <div key={`placeholder-${activeSection}`}>
-                    {/* Mobile trigger when outside dashboard */}
-                    <div className="mb-4 flex items-center lg:hidden">
-                      <button
-                        type="button"
-                        onClick={() => setMobileMenuOpen(true)}
-                        aria-label="Abrir menu lateral"
-                        className="liquid-glass inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-200"
-                      >
-                        <span>Menu · {activeNavMeta.label}</span>
-                      </button>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <TopBar
+              pageTitle={topBarTitle}
+              showPeriodSelector={
+                activeSection === 'dashboard' && viewMode === 'mensal'
+              }
+              year={period.year}
+              monthIndex={period.monthIndex}
+              direction={periodDirection}
+              isCurrentMonth={isCurrentMonth}
+              onPrevMonth={() => handleShiftMonth(-1)}
+              onNextMonth={() => handleShiftMonth(1)}
+              onResetCurrentMonth={handleResetCurrentMonth}
+              onOpenMobileMenu={() => setMobileMenuOpen(true)}
+            />
+
+            <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 lg:px-8 lg:py-6">
+              <div className="mx-auto w-full max-w-[1384px]">
+                <AnimatePresence mode="wait">
+                  {activeSection !== 'dashboard' && activeNavMeta ? (
+                    <div key={`placeholder-${activeSection}`}>
+                      <ModulePlaceholderView
+                        title={activeNavMeta.label}
+                        description={activeNavMeta.description}
+                        icon={activeNavMeta.icon}
+                        onReturnToDashboard={() => setActiveSection('dashboard')}
+                      />
                     </div>
-                    <ModulePlaceholderView
-                      title={activeNavMeta.label}
-                      description={activeNavMeta.description}
-                      icon={activeNavMeta.icon}
-                      onReturnToDashboard={() => setActiveSection('dashboard')}
-                    />
-                  </div>
-                ) : (
-                  <motion.div
-                    key="dashboard-view"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    <DashboardHeader
-                      year={period.year}
-                      monthIndex={period.monthIndex}
-                      direction={periodDirection}
-                      isCurrentMonth={isCurrentMonth}
-                      isFutureMonth={futureMonth}
-                      viewMode={viewMode}
-                      onChangeViewMode={setViewMode}
-                      onPrevMonth={() => handleShiftMonth(-1)}
-                      onNextMonth={() => handleShiftMonth(1)}
-                      onResetCurrentMonth={handleResetCurrentMonth}
-                      onOpenMobileMenu={() => setMobileMenuOpen(true)}
-                    />
+                  ) : (
+                    <motion.div
+                      key="dashboard-view"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <DashboardHeader
+                        isFutureMonth={futureMonth}
+                        viewMode={viewMode}
+                        onChangeViewMode={setViewMode}
+                      />
 
-                    <AnimatePresence mode="wait">
-                      {viewMode === 'anual' ? (
-                        <ModulePlaceholderView
-                          key="annual-placeholder"
-                          title="Visão Anual Consolidada"
-                          description="O modo anual reunirá comparativos de longo prazo, evolução patrimonial e médias anuais. Utilize a visão mensal para acompanhar o período atual."
-                          icon={CalendarClock}
-                          contextLabel="Visualização disponível nas próximas etapas"
-                          onReturnToDashboard={() => setViewMode('mensal')}
-                        />
-                      ) : (
-                        <motion.div
-                          key="monthly-dashboard"
-                          initial={{ opacity: 0, y: 6 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -6 }}
-                          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                          className="space-y-5"
-                        >
-                          {/* 1. Primary 3 KPI Cards */}
-                          <PrimaryMetricsRow summary={monthlySummary} />
-
-                          {/* 2. Rolling 30 Days Result */}
-                          <Rolling30DaysCard rolling={rolling30Days} />
-
-                          {/* 3. Main Bento Composition: Calendar (7 cols) + Category Pie (5 cols) */}
-                          <div className="grid grid-cols-1 items-stretch gap-5 xl:grid-cols-12">
-                            <div className="xl:col-span-7">
-                              <FinancialCalendarCard
-                                year={period.year}
-                                monthIndex={period.monthIndex}
-                                cells={calendarCells}
-                                onSelectDay={(day) => setSelectedDay(day)}
-                              />
-                            </div>
-
-                            <div className="xl:col-span-5">
-                              <ExpensesByCategoryCard
-                                year={period.year}
-                                monthIndex={period.monthIndex}
-                                totalExpenses={categoryBreakdown.totalExpenses}
-                                slices={categoryBreakdown.slices}
-                              />
-                            </div>
-                          </div>
-
-                          {/* 4. Full-width Financial History Grouped Bar Chart */}
-                          <FinancialHistoryCard
-                            points={historyPoints}
-                            rangeMonths={historyRange}
-                            onChangeRange={setHistoryRange}
+                      <AnimatePresence mode="wait">
+                        {viewMode === 'anual' ? (
+                          <ModulePlaceholderView
+                            key="annual-placeholder"
+                            title="Visão Anual Consolidada"
+                            description="O modo anual reunirá comparativos de longo prazo, evolução patrimonial e médias anuais. Utilize a visão mensal para acompanhar o período atual."
+                            icon={CalendarClock}
+                            contextLabel="Visualização disponível nas próximas etapas"
+                            onReturnToDashboard={() => setViewMode('mensal')}
                           />
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </main>
+                        ) : (
+                          <motion.div
+                            key="monthly-dashboard"
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -6 }}
+                            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                            className="space-y-5"
+                          >
+                            {/* 1. Primary 3 KPI Cards */}
+                            <PrimaryMetricsRow summary={monthlySummary} />
+
+                            {/* 2. Rolling 30 Days Result */}
+                            <Rolling30DaysCard rolling={rolling30Days} />
+
+                            {/* 3. Main Bento Composition: Calendar (7 cols) + Expenses by Tags (5 cols) */}
+                            <div className="grid grid-cols-1 items-stretch gap-5 xl:grid-cols-12">
+                              <div className="xl:col-span-7">
+                                <FinancialCalendarCard
+                                  year={period.year}
+                                  monthIndex={period.monthIndex}
+                                  cells={calendarCells}
+                                  onSelectDay={(day) => setSelectedDay(day)}
+                                />
+                              </div>
+
+                              <div className="xl:col-span-5">
+                                <ExpensesByTagsCard
+                                  year={period.year}
+                                  monthIndex={period.monthIndex}
+                                  totalExpenses={tagBreakdown.totalExpenses}
+                                  slices={tagBreakdown.slices}
+                                />
+                              </div>
+                            </div>
+
+                            {/* 4. Full-width Financial History Grouped Bar Chart */}
+                            <FinancialHistoryCard
+                              points={historyPoints}
+                              rangeMonths={historyRange}
+                              onChangeRange={setHistoryRange}
+                            />
+
+                            {/* 5. Category-based Financial Goals Section */}
+                            <FinancialGoalsSection
+                              goals={categoryGoalsProgress}
+                              planningIncome={planningIncome}
+                              savedNoticeVisible={goalsSavedNotice}
+                              onOpenConfig={handleOpenGoalModal}
+                            />
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </main>
+          </div>
         </div>
 
         <DayTransactionsModal
           day={selectedDay}
           onClose={() => setSelectedDay(null)}
+        />
+
+        <GoalConfigModal
+          isOpen={goalModalOpen}
+          goals={categoryGoals}
+          planningIncome={planningIncome}
+          focusCategoryId={goalModalFocusCategory}
+          onClose={() => {
+            setGoalModalOpen(false);
+            setGoalModalFocusCategory(null);
+          }}
+          onSave={handleSaveGoals}
         />
       </div>
     </MotionConfig>

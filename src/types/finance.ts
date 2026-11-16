@@ -3,12 +3,12 @@ export type TransactionType = 'income' | 'expense';
 export type ExpenseCategoryId =
   | 'moradia'
   | 'alimentacao'
+  | 'educacao'
   | 'transporte'
-  | 'saude'
-  | 'lazer'
-  | 'assinaturas'
   | 'contas'
-  | 'educacao';
+  | 'lazer'
+  | 'saude'
+  | 'restaurantes';
 
 export type IncomeCategoryId = 'salario' | 'rendimentos' | 'extras';
 
@@ -21,6 +21,21 @@ export interface CategoryMeta {
   type: TransactionType;
 }
 
+export type TagId =
+  | 'necessidades'
+  | 'fixos'
+  | 'variaveis'
+  | 'bem_estar'
+  | 'desenvolvimento'
+  | 'social'
+  | 'sem_tag';
+
+export interface TagMeta {
+  id: TagId;
+  name: string;
+  color: string;
+}
+
 export interface Transaction {
   id: string;
   date: string; // YYYY-MM-DD (local date)
@@ -28,6 +43,37 @@ export interface Transaction {
   amount: number; // positive BRL value
   type: TransactionType;
   categoryId: CategoryId;
+  tagIds: TagId[]; // Independent classification tags
+}
+
+export type GoalMode = 'none' | 'fixed' | 'percentage';
+
+export interface CategoryGoalConfig {
+  categoryId: ExpenseCategoryId;
+  mode: GoalMode;
+  value: number; // BRL amount when mode === 'fixed', or 0..100 percentage when mode === 'percentage'
+}
+
+export type CategoryGoalStatus =
+  | 'unconfigured'
+  | 'positive'
+  | 'attention'
+  | 'warning'
+  | 'reached'
+  | 'exceeded';
+
+export interface CategoryGoalProgress {
+  categoryId: ExpenseCategoryId;
+  name: string;
+  mode: GoalMode;
+  configuredValue: number;
+  spent: number;
+  limit: number | null;
+  percentage: number | null;
+  visualFillPercentage: number;
+  remaining: number | null;
+  exceeded: number;
+  status: CategoryGoalStatus;
 }
 
 export type NavigationSectionId =
@@ -77,8 +123,8 @@ export interface CalendarDayCell {
   transactions: Transaction[];
 }
 
-export interface CategoryExpenseSlice {
-  categoryId: CategoryId;
+export interface TagExpenseSlice {
+  tagId: TagId;
   name: string;
   color: string;
   amount: number;

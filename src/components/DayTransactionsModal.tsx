@@ -2,6 +2,7 @@ import { ArrowDownRight, ArrowUpRight, Calendar, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect } from 'react';
 import { getCategoryMeta } from '../data/categories';
+import { getTagMeta } from '../data/tags';
 import { formatBRL, formatFullDatePtBR } from '../lib/format';
 import type { CalendarDayCell } from '../types/finance';
 
@@ -127,6 +128,10 @@ export function DayTransactionsModal({ day, onClose }: DayTransactionsModalProps
                   {day.transactions.map((tx) => {
                     const cat = getCategoryMeta(tx.categoryId);
                     const isIncome = tx.type === 'income';
+                    const tagLabels =
+                      tx.tagIds && tx.tagIds.length > 0
+                        ? tx.tagIds.map((id) => getTagMeta(id).name).join(', ')
+                        : 'Sem tag';
                     return (
                       <li
                         key={tx.id}
@@ -150,13 +155,21 @@ export function DayTransactionsModal({ day, onClose }: DayTransactionsModalProps
                             <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
                               {tx.description}
                             </p>
-                            <p className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                            <p className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
                               <span
                                 className="inline-block h-2 w-2 rounded-full"
                                 style={{ backgroundColor: cat.color }}
                                 aria-hidden="true"
                               />
                               <span>{cat.name}</span>
+                              {!isIncome && (
+                                <>
+                                  <span aria-hidden="true">·</span>
+                                  <span className="truncate text-slate-400 dark:text-slate-500">
+                                    Tags: {tagLabels}
+                                  </span>
+                                </>
+                              )}
                             </p>
                           </div>
                         </div>

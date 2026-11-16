@@ -1,11 +1,17 @@
-import { getCategoryMeta } from '../data/categories';
+import { EXPENSE_CATEGORY_ORDER, getCategoryMeta } from '../data/categories';
+import { getTagMeta } from '../data/tags';
 import type {
   CalendarDayCell,
-  CategoryExpenseSlice,
+  CategoryGoalConfig,
+  CategoryGoalProgress,
+  CategoryGoalStatus,
+  ExpenseCategoryId,
   HistoryPoint,
   HistoryRangeMonths,
   MonthlySummary,
   RollingPeriodSummary,
+  TagExpenseSlice,
+  TagId,
   Transaction,
 } from '../types/finance';
 import {
@@ -151,7 +157,7 @@ export function getCalendarMonthGrid(
   const todayIso = toIsoDate(referenceDate);
   const firstDay = new Date(year, monthIndex, 1);
   const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-  const leadingEmptyDays = firstDay.getDay(); // 0 (Dom) .. 6 (Sáb)
+  const leadingEmptyDays = firstDay.getDay();
 
   const monthly = filterTransactionsByMonth(transactions, year, monthIndex);
   const byDate = new Map<string, Transaction[]>();
@@ -165,7 +171,6 @@ export function getCalendarMonthGrid(
     }
   }
 
-  // Compute daily totals first to find the relative max expense within this month
   const dailyTotals = new Map<
     string,
     { income: number; expenses: number; transactions: Transaction[] }
@@ -196,7 +201,6 @@ export function getCalendarMonthGrid(
 
   const cells: CalendarDayCell[] = [];
 
-  // Leading padding cells (previous month placeholders, non-current)
   for (let i = leadingEmptyDays; i > 0; i--) {
     const dt = new Date(year, monthIndex, 1 - i);
     const iso = toIsoDate(dt);
@@ -214,7 +218,6 @@ export function getCalendarMonthGrid(
     });
   }
 
-  // Current month days
   for (let day = 1; day <= daysInMonth; day++) {
     const iso = `${prefix}-${String(day).padStart(2, '0')}`;
     const data = dailyTotals.get(iso)!;
@@ -232,7 +235,6 @@ export function getCalendarMonthGrid(
     });
   }
 
-  // Trailing padding cells to complete the last week row (multiples of 7)
   const remainder = cells.length % 7;
   if (remainder !== 0) {
     const trailingCount = 7 - remainder;
@@ -257,11 +259,17 @@ export function getCalendarMonthGrid(
   return cells;
 }
 
-export function getExpensesByCategory(
+/**
+ * Computes expense distribution grouped exclusively by independent Tags.
+ * Anti-duplication rule: if a transaction carries multiple tags, its amount
+ * is divided equally in integer cents across those unique tags so the sum of
+ * all slices always equals exact total monthly expenses.
+ */
+export function getExpensesByTag(
   transactions: readonly Transaction[],
   year: number,
   monthIndex: number,
-): { totalExpenses: number; slices: CategoryExpenseSlice[] } {
+): { totalExpenses: number; slices: TagExpenseSlice[] } {
   const monthlyExpenses = filterTransactionsByMonth(
     transactions,
     year,
@@ -272,37 +280,139 @@ export function getExpensesByCategory(
     return { totalExpenses: 0, slices: [] };
   }
 
-  const totalsByCat = new Map<string, number>();
-  let totalExpenses = 0;
+  const centsByTag = new Map<TagId, number>();
+  let totalCents = 0;
 
   for (const tx of monthlyExpenses) {
-    totalExpenses += tx.amount;
-    totalsByCat.set(
-      tx.categoryId,
-      (totalsByCat.get(tx.categoryId) ?? 0) + tx.amount,
-    );
+    const txCents = Math.round(tx.amount * 100);
+    totalCents += txCents;
+
+    const uniqueTags: TagId[] =
+      tx.tagIds && tx.tagIds.length > 0
+        ? Array.from(new Set(tx.tagIds))
+        : ['sem_tag'];
+
+    const count = uniqueTags.length;
+    const baseShare = Math.floor(txCents / count);
+    const remainder = txCents % count;
+
+    uniqueTags.forEach((tagId, idx) => {
+      const share = baseShare + (idx < remainder ? 1 : 0);
+      centsByTag.set(tagId, (centsByTag.get(tagId) ?? 0) + share);
+    });
   }
 
-  const roundedTotal = roundCurrency(totalExpenses);
+  const totalExpenses = roundCurrency(totalCents / 100);
 
-  const slices: CategoryExpenseSlice[] = Array.from(totalsByCat.entries())
-    .map(([catId, amount]) => {
-      const meta = getCategoryMeta(catId as Transaction['categoryId']);
-      const roundedAmount = roundCurrency(amount);
+  const slices: TagExpenseSlice[] = Array.from(centsByTag.entries())
+    .map(([tagId, cents]) => {
+      const meta = getTagMeta(tagId);
+      const amount = roundCurrency(cents / 100);
       return {
-        categoryId: meta.id,
+        tagId: meta.id,
         name: meta.name,
         color: meta.color,
-        amount: roundedAmount,
-        percentage: roundedTotal > 0 ? (roundedAmount / roundedTotal) * 100 : 0,
+        amount,
+        percentage: totalCents > 0 ? (cents / totalCents) * 100 : 0,
       };
     })
     .sort((a, b) => b.amount - a.amount);
 
   return {
-    totalExpenses: roundedTotal,
+    totalExpenses,
     slices,
   };
+}
+
+export function resolveGoalLimit(
+  config: CategoryGoalConfig | undefined,
+  planningIncome: number,
+): number | null {
+  if (!config || config.mode === 'none' || config.value <= 0) {
+    return null;
+  }
+  if (config.mode === 'fixed') {
+    return roundCurrency(config.value);
+  }
+  if (planningIncome <= 0) {
+    return null;
+  }
+  return roundCurrency((planningIncome * config.value) / 100);
+}
+
+export function getGoalStatus(
+  spent: number,
+  limit: number | null,
+): CategoryGoalStatus {
+  if (limit === null || limit <= 0) {
+    return 'unconfigured';
+  }
+  if (Math.abs(spent - limit) < 0.01) {
+    return 'reached';
+  }
+  if (spent > limit) {
+    return 'exceeded';
+  }
+  const percentage = (spent / limit) * 100;
+  if (percentage >= 90) {
+    return 'warning';
+  }
+  if (percentage >= 70) {
+    return 'attention';
+  }
+  return 'positive';
+}
+
+export function getCategoryGoalsProgress(
+  transactions: readonly Transaction[],
+  year: number,
+  monthIndex: number,
+  goals: Record<ExpenseCategoryId, CategoryGoalConfig>,
+  planningIncome: number,
+): CategoryGoalProgress[] {
+  const monthlyExpenses = filterTransactionsByMonth(
+    transactions,
+    year,
+    monthIndex,
+  ).filter((tx) => tx.type === 'expense');
+
+  const spentByCategory = new Map<ExpenseCategoryId, number>();
+  for (const tx of monthlyExpenses) {
+    const catId = tx.categoryId as ExpenseCategoryId;
+    spentByCategory.set(catId, (spentByCategory.get(catId) ?? 0) + tx.amount);
+  }
+
+  return EXPENSE_CATEGORY_ORDER.map((categoryId) => {
+    const meta = getCategoryMeta(categoryId);
+    const config = goals[categoryId] ?? { categoryId, mode: 'none', value: 0 };
+    const spent = roundCurrency(spentByCategory.get(categoryId) ?? 0);
+    const limit = resolveGoalLimit(config, planningIncome);
+    const status = getGoalStatus(spent, limit);
+    const percentage =
+      limit !== null && limit > 0
+        ? Math.round(((spent / limit) * 100 + Number.EPSILON) * 100) / 100
+        : null;
+    const visualFillPercentage =
+      percentage !== null ? Math.min(100, Math.max(0, percentage)) : 0;
+    const remaining =
+      limit !== null ? roundCurrency(Math.max(0, limit - spent)) : null;
+    const exceeded =
+      limit !== null && spent > limit ? roundCurrency(spent - limit) : 0;
+
+    return {
+      categoryId,
+      name: meta.name,
+      mode: config.mode,
+      configuredValue: config.value,
+      spent,
+      limit,
+      percentage,
+      visualFillPercentage,
+      remaining,
+      exceeded,
+      status,
+    };
+  });
 }
 
 export function getFinancialHistory(
@@ -313,7 +423,8 @@ export function getFinancialHistory(
   referenceDate: Date = new Date(),
 ): HistoryPoint[] {
   const points: HistoryPoint[] = [];
-  const spansMultipleYears = rangeMonths === 12 || anchorMonthIndex - (rangeMonths - 1) < 0;
+  const spansMultipleYears =
+    rangeMonths === 12 || anchorMonthIndex - (rangeMonths - 1) < 0;
 
   for (let offset = rangeMonths - 1; offset >= 0; offset--) {
     const { year, monthIndex } = shiftMonth(

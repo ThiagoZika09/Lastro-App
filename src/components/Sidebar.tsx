@@ -403,7 +403,7 @@ export function Sidebar({
       {/* Desktop rail */}
       <div
         className="hidden shrink-0 lg:block"
-        style={{ width: isPinned ? 244 : 76 }}
+        style={{ width: isPinned ? 256 : 88 }}
       >
         <motion.aside
           aria-label="Barra lateral de navegação"

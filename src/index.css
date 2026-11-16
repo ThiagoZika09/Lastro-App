@@ -9,24 +9,30 @@
 @layer base {
   :root {
     color-scheme: light;
-    --lastro-bg: #f3f5f9;
-    --lastro-glass-bg: rgba(255, 255, 255, 0.72);
-    --lastro-glass-bg-elevated: rgba(255, 255, 255, 0.86);
-    --lastro-glass-border: rgba(15, 23, 42, 0.075);
-    --lastro-glass-highlight: rgba(255, 255, 255, 0.92);
-    --lastro-glass-shadow: 0 10px 30px -6px rgba(15, 23, 42, 0.055), 0 2px 8px -2px rgba(15, 23, 42, 0.03);
-    --lastro-pie-stroke: rgba(255, 255, 255, 0.92);
+    --lastro-bg: #f2f5fa;
+    --lastro-glass-bg: rgba(255, 255, 255, 0.74);
+    --lastro-glass-bg-elevated: rgba(255, 255, 255, 0.88);
+    --lastro-glass-topbar: rgba(246, 248, 252, 0.78);
+    --lastro-glass-border: rgba(15, 23, 42, 0.08);
+    --lastro-glass-highlight: rgba(255, 255, 255, 0.96);
+    --lastro-glass-shadow:
+      0 12px 32px -8px rgba(15, 23, 42, 0.065),
+      0 2px 10px -2px rgba(15, 23, 42, 0.035);
+    --lastro-pie-stroke: rgba(255, 255, 255, 0.94);
   }
 
   .dark {
     color-scheme: dark;
-    --lastro-bg: #090b10;
-    --lastro-glass-bg: rgba(22, 26, 36, 0.68);
-    --lastro-glass-bg-elevated: rgba(30, 35, 48, 0.84);
-    --lastro-glass-border: rgba(255, 255, 255, 0.085);
-    --lastro-glass-highlight: rgba(255, 255, 255, 0.09);
-    --lastro-glass-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.55), 0 2px 10px -2px rgba(0, 0, 0, 0.35);
-    --lastro-pie-stroke: rgba(22, 26, 36, 0.92);
+    --lastro-bg: #080a0f;
+    --lastro-glass-bg: rgba(21, 25, 36, 0.70);
+    --lastro-glass-bg-elevated: rgba(28, 34, 48, 0.86);
+    --lastro-glass-topbar: rgba(12, 15, 22, 0.76);
+    --lastro-glass-border: rgba(255, 255, 255, 0.09);
+    --lastro-glass-highlight: rgba(255, 255, 255, 0.10);
+    --lastro-glass-shadow:
+      0 18px 44px -12px rgba(0, 0, 0, 0.62),
+      0 3px 12px -2px rgba(0, 0, 0, 0.38);
+    --lastro-pie-stroke: rgba(21, 25, 36, 0.94);
   }
 
   html {
@@ -41,7 +47,7 @@
     margin: 0;
     min-height: 100vh;
     background-color: var(--lastro-bg);
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   .dark body {
@@ -50,9 +56,13 @@
 }
 
 .liquid-glass {
-  background: var(--lastro-glass-bg);
-  backdrop-filter: blur(22px) saturate(165%);
-  -webkit-backdrop-filter: blur(22px) saturate(165%);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.82) 0%,
+    var(--lastro-glass-bg) 100%
+  );
+  backdrop-filter: blur(24px) saturate(170%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
   border: 1px solid var(--lastro-glass-border);
   box-shadow: var(--lastro-glass-shadow), inset 0 1px 0 0 var(--lastro-glass-highlight);
   transition:
@@ -62,16 +72,44 @@
     transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.dark .liquid-glass {
+  background: linear-gradient(
+    180deg,
+    rgba(28, 34, 48, 0.76) 0%,
+    var(--lastro-glass-bg) 100%
+  );
+}
+
 .liquid-glass-elevated {
   background: var(--lastro-glass-bg-elevated);
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(185%);
+  -webkit-backdrop-filter: blur(28px) saturate(185%);
   border: 1px solid var(--lastro-glass-border);
-  box-shadow: 0 20px 44px -12px rgba(15, 23, 42, 0.14), inset 0 1px 0 0 var(--lastro-glass-highlight);
+  box-shadow:
+    0 22px 48px -12px rgba(15, 23, 42, 0.16),
+    inset 0 1px 0 0 var(--lastro-glass-highlight);
 }
 
 .dark .liquid-glass-elevated {
-  box-shadow: 0 24px 52px -12px rgba(0, 0, 0, 0.72), inset 0 1px 0 0 var(--lastro-glass-highlight);
+  box-shadow:
+    0 24px 56px -12px rgba(0, 0, 0, 0.76),
+    inset 0 1px 0 0 var(--lastro-glass-highlight);
+}
+
+.liquid-glass-topbar {
+  background: var(--lastro-glass-topbar);
+  backdrop-filter: blur(26px) saturate(180%);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  border-bottom: 1px solid var(--lastro-glass-border);
+  box-shadow:
+    0 8px 24px -10px rgba(15, 23, 42, 0.06),
+    inset 0 -1px 0 0 rgba(255, 255, 255, 0.35);
+}
+
+.dark .liquid-glass-topbar {
+  box-shadow:
+    0 10px 28px -10px rgba(0, 0, 0, 0.52),
+    inset 0 -1px 0 0 rgba(255, 255, 255, 0.04);
 }
 
 .tabular-nums {
